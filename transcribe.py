@@ -3,10 +3,7 @@ import npyscreen
 import os
 import threading
 import openai
-from whispercpp import Whisper
 from pathlib import Path
-
-w = Whisper('tiny')
 
 OUTPUT_DIR = './transcribe-audio/'
 openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -28,27 +25,19 @@ def download_audio_from_youtube(url):
         'no_warnings': True,
         'format': 'bestaudio/best',
         'outtmpl': './transcribe-audio/%(title)s.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'wav',
-            'preferredquality': '16',
-        }],
-        'postprocessor_args': [
-            '-ar', '16000', '-ac', '1', '-sample_fmt', 's16'
-        ],
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
-        filename = Path(filename).with_suffix('.wav').name
+        filename = Path(filename).with_suffix('.webm').name
 
     return filename or None
 
 
 def download_video_from_youtube(url):
     ydl_opts = {
-        'format': 'best',
+        'format': 'worstaudio',
         'outtmpl': f'{OUTPUT_DIR}%(title)s.%(ext)s',
     }
 
@@ -57,8 +46,9 @@ def download_video_from_youtube(url):
 
 
 def speech_to_text(audio_file):
-    transcription = w.transcribe(audio_file)
-    return w.extract_text(transcription)
+    audio=open(audio_file, "rb")
+    response = openai.Audio.transcribe('whisper-1', audio)
+    return response['text']
 
 
 def meeting_minutes(transcription):
@@ -153,17 +143,19 @@ class App(npyscreen.NPSAppManaged):
 
 class MainForm(npyscreen.ActionFormMinimal):
     def transcribe_audio(self, files):
-        transcription = ''.join(speech_to_text(OUTPUT_DIR + files['audio']))
+        transcription = speech_to_text(OUTPUT_DIR + files['audio'])
         minutes = meeting_minutes(transcription=transcription)
         print(minutes)
         files['transcription'] = f'{files["audio"]}-transcription.txt'
-        files['minutes'] = f'{files["audio"]}-minutes.txt'
+        files['minutes'] = f'{files["audio"]}-minutes.md'
         with open(OUTPUT_DIR + f'{files["transcription"]}', 'w') as f:
             f.write(transcription)
         with open(OUTPUT_DIR + f'{files["minutes"]}', 'w') as f:
+            f.write(f"# {files['audio']}\n")
+            f.write(f"[{self.url.value}]({self.url.value})\n\n")
             for title, text in minutes.items():
                 title = title.replace('_', ' ').strip().title()
-                f.write(f"{title}\n\n{text}\n\n\n")
+                f.write(f"## {title}\n\n{text}\n\n\n")
 
     def create(self):
         self.url = self.add(npyscreen.TitleText,

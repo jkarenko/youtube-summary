@@ -10,7 +10,5 @@ COPY . .
 ARG OPENAI_API_KEY
 ENV OPENAI_API_KEY=$OPENAI_API_KEY
 
-VOLUME [ "/app/transcribe-audio" ]
-
 CMD [ "python3", "-u", "transcribe.py" ]
 

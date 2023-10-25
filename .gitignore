@@ -9,8 +9,6 @@ dist/
 build/
 *.egg
 .pytest_cache/
-transcribe-audio/*.wav
-transcribe-audio/*.mp3
-transcribe-audio/*.txt
-transcribe-audio/*.md
-transcribe-audio/*.webm
+transcribe-audio/*
+!transcribe-audio/.keep
+
