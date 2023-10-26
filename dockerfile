@@ -1,5 +1,7 @@
 FROM python:3.11-slim-buster
 
+RUN apt-get update && apt-get install -y ffmpeg
+
 WORKDIR /app
 
 COPY requirements.txt requirements.txt
@@ -10,5 +12,5 @@ COPY . .
 ARG OPENAI_API_KEY
 ENV OPENAI_API_KEY=$OPENAI_API_KEY
 
-CMD [ "python3", "-u", "transcribe.py" ]
-
+ENTRYPOINT [ "python3", "transcribe.py" ]
+CMD ["https://youtu.be/bZe5J8SVCYQ"]

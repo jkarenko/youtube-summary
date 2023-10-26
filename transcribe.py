@@ -1,52 +1,41 @@
 import yt_dlp
-import npyscreen
 import os
 import threading
 import openai
+import sys
 from pathlib import Path
+from pydub import AudioSegment
 
 OUTPUT_DIR = './transcribe-audio/'
 openai.api_key = os.getenv('OPENAI_API_KEY')
-
-
-def summarize_text(text):
-    response = openai.Completion.create(
-        engine="gpt-4",
-        prompt=text,
-        temperature=0.3,
-        max_tokens=100
-    )
-    return response.choices[0].text.strip()
+file_extension = 'mp3'
 
 
 def download_audio_from_youtube(url):
+    print("processing audio...")
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'format': 'bestaudio/best',
         'outtmpl': './transcribe-audio/%(title)s.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': file_extension,
+            'preferredquality': '32',
+        }],
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
-        filename = Path(filename).with_suffix('.webm').name
+        filename = Path(filename).with_suffix('.' + file_extension).name
 
     return filename or None
 
 
-def download_video_from_youtube(url):
-    ydl_opts = {
-        'format': 'worstaudio',
-        'outtmpl': f'{OUTPUT_DIR}%(title)s.%(ext)s',
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-
-
 def speech_to_text(audio_file):
-    audio=open(audio_file, "rb")
+    print("transcribing audio...")
+    audio = open(audio_file, "rb")
     response = openai.Audio.transcribe('whisper-1', audio)
     return response['text']
 
@@ -65,6 +54,7 @@ def meeting_minutes(transcription):
 
 
 def abstract_summary_extraction(transcription):
+    print("creating abstract...")
     response = openai.ChatCompletion.create(
         model="gpt-4",
         temperature=0,
@@ -83,6 +73,7 @@ def abstract_summary_extraction(transcription):
 
 
 def key_points_extraction(transcription):
+    print("extracting key points...")
     response = openai.ChatCompletion.create(
         model="gpt-4",
         temperature=0,
@@ -101,6 +92,7 @@ def key_points_extraction(transcription):
 
 
 def sentiment_analysis(transcription):
+    print("performing sentiment analysis...")
     response = openai.ChatCompletion.create(
         model="gpt-4",
         temperature=0,
@@ -119,6 +111,7 @@ def sentiment_analysis(transcription):
 
 
 def action_item_extraction(transcription):
+    print("extracting action items...")
     response = openai.ChatCompletion.create(
         model="gpt-4",
         temperature=0,
@@ -136,61 +129,41 @@ def action_item_extraction(transcription):
     return response['choices'][0]['message']['content']
 
 
-class App(npyscreen.NPSAppManaged):
-    def onStart(self):
-        self.addForm('MAIN', MainForm, name="YouTube Transcriber")
+def transcribe_audio(files):
+    transcription = speech_to_text(OUTPUT_DIR + files['audio'])
+    minutes = meeting_minutes(transcription=transcription)
 
+    files['transcription'] = f'{files["audio"]}-transcription.txt'
+    files['minutes'] = f'{files["audio"]}-minutes.md'
+    with open(OUTPUT_DIR + f'{files["transcription"]}', 'w') as f:
+        f.write(transcription)
+    with open(OUTPUT_DIR + f'{files["minutes"]}', 'w') as f:
+        f.write(f"# {files['audio']}\n")
+        f.write(f"[{url}]({url})\n\n")
+        for title, text in minutes.items():
+            title = title.replace('_', ' ').strip(
+            ).title().split('.' + file_extension)[0]
+            f.write(f"## {title}\n\n{text}\n\n\n")
 
-class MainForm(npyscreen.ActionFormMinimal):
-    def transcribe_audio(self, files):
-        transcription = speech_to_text(OUTPUT_DIR + files['audio'])
-        minutes = meeting_minutes(transcription=transcription)
-        print(minutes)
-        files['transcription'] = f'{files["audio"]}-transcription.txt'
-        files['minutes'] = f'{files["audio"]}-minutes.md'
-        with open(OUTPUT_DIR + f'{files["transcription"]}', 'w') as f:
-            f.write(transcription)
-        with open(OUTPUT_DIR + f'{files["minutes"]}', 'w') as f:
-            f.write(f"# {files['audio']}\n")
-            f.write(f"[{self.url.value}]({self.url.value})\n\n")
-            for title, text in minutes.items():
-                title = title.replace('_', ' ').strip().title()
-                f.write(f"## {title}\n\n{text}\n\n\n")
+    print(f"All done! Find your files in {OUTPUT_DIR}")
 
-    def create(self):
-        self.url = self.add(npyscreen.TitleText,
-                            name="Enter the YouTube URL: ")
-        self.choice = self.add(npyscreen.TitleSelectOne, max_height=4, value=[0], name="Select operation:",
-                               values=["Download audio", "Download video", "Transcribe Audio"], scroll_exit=True)
+def main(url):
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+    }
 
-    def on_ok(self):
-        url = self.url.value
-        choice = self.choice.value[0]
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        video_info = ydl.extract_info(url, download=False)
 
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-        }
+    info_string = f"\nTitle: {video_info['title']}\n\nDescription: {video_info['description']}\n"
+    print(info_string)
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            video_info = ydl.extract_info(url, download=False)
-
-        info_string = f"\nTitle: {video_info['title']}\n\nDescription: {video_info['description']}\n"
-        npyscreen.notify_confirm(info_string, title="Video Info")
-
-        self.parentApp.switchForm(None)
-
-        files = {}
-        if choice in [0, 2]:
-            files['audio'] = download_audio_from_youtube(url)
-        if choice == 1:
-            files['video'] = download_video_from_youtube(url)
-        if choice == 2:
-            transcription_thread = threading.Thread(
-                target=self.transcribe_audio, args=(files,))
-            transcription_thread.start()
+    files = {}
+    files['audio'] = download_audio_from_youtube(url)
+    transcribe_audio(files)
 
 
 if __name__ == '__main__':
-    App = App()
-    App.run()
+    url = sys.argv[1]
+    main(url)
