@@ -5,6 +5,8 @@ import openai
 import sys
 import subprocess
 import tiktoken
+import time
+import threading
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.stem import WordNetLemmatizer
@@ -17,20 +19,52 @@ file_extension = 'mp3'
 lemmatizer = WordNetLemmatizer()
 MODEL = "gpt-3.5-turbo"
 MIN_OUTPUT_TOKENS = 100
+SAMPLE_RATE = 8000
+
+
+class LoadingIndicator(threading.Thread):
+    def __init__(self, lock):
+        super(LoadingIndicator, self).__init__()
+        self.stop_flag = threading.Event()
+        self.lock = lock
+
+    def run(self):
+        while not self.stop_flag.is_set():
+            for cursor in '|/-\\':
+                with self.lock:
+                    sys.stdout.write(cursor)
+                    sys.stdout.flush()
+                time.sleep(0.1)
+                with self.lock:
+                    sys.stdout.write('\b')
+
+    def stop(self):
+        self.stop_flag.set()
+
 
 MODELS_INFO = {
     'gpt-3.5-turbo': {'max_tokens': 4097, 'per_1k_tokens_input': 0.0015, 'per_1k_tokens_output': 0.002},
     'gpt-3.5-turbo-16k': {'max_tokens': 16385, 'per_1k_tokens_input': 0.003, 'per_1k_tokens_output': 0.004},
     'gpt-4': {'max_tokens': 8192, 'per_1k_tokens_input': 0.03, 'per_1k_tokens_output': 0.06},
     'gpt-4-32k': {'max_tokens': 32768, 'per_1k_tokens_input': 0.06, 'per_1k_tokens_output': 0.12},
+    'whisper': {'max_size_mb': 25, 'cost_per_minute': 0.006},
 }
+
+
+def loading_indicator():
+    while True:
+        for cursor in '|/-\\':
+            sys.stdout.write(cursor)
+            sys.stdout.flush()
+            time.sleep(0.1)
+            sys.stdout.write('\b')
 
 
 def speed_up_audio(filename):
     print("speeding up audio...")
     output_filename = Path(filename).with_suffix('.' + file_extension).name
     print(f"creating {output_filename}...")
-    subprocess.run(['ffmpeg', '-n', '-i', filename, '-filter:a', 'atempo=2.0', '-ar', '8000', '-vn', '-ac', '1', '-q:a', '9', OUTPUT_DIR + output_filename], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['ffmpeg', '-n', '-i', filename, '-filter:a', 'atempo=2.0', '-ar', SAMPLE_RATE, '-vn', '-ac', '1', '-q:a', '9', OUTPUT_DIR + output_filename], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     return output_filename
 
@@ -46,11 +80,6 @@ def download_audio_from_youtube(url, video_info):
         'no_warnings': True,
         'format': 'bestaudio/best',
         'outtmpl': './transcribe-audio/%(title)s.%(ext)s',
-        # 'postprocessors': [{
-        #     'key': 'FFmpegExtractAudio',
-        #     'preferredcodec': file_extension,
-        #     'preferredquality': '32',
-        # }],
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -66,11 +95,25 @@ def download_audio_from_youtube(url, video_info):
     return filename or None
 
 
+# def remove_silence(audio_file):
+    
+
+
 def speech_to_text(audio_file):
-    print(f"transcribing audio from {audio_file}...")
+    print(f"opening audio file {audio_file}...")
+
     audio = open(audio_file, "rb")
-    response = openai.Audio.transcribe('whisper-1', audio)
-    return response['text']
+    audio_duration_minutes = len(audio.read()) / SAMPLE_RATE / 60
+    audio_cost = audio_duration_minutes * MODELS_INFO['whisper']['cost_per_minute']
+
+    print(f"audio duration: {audio_duration_minutes} minutes")
+    print(f"cost for audio to text: ${audio_cost}")
+    print(f"transcribing audio from {audio_file}...")
+
+    response = openai.Audio.transcribe(model='whisper-1', file=audio, response_format='srt', language='en')
+
+    print("\n")
+    return response, audio_cost
 
 
 def meeting_minutes(transcription):
@@ -89,7 +132,6 @@ def meeting_minutes(transcription):
         'action_items'      : (action_items['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + action_items['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
         'sentiment'         : (sentiment['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + sentiment['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
     }
-
 
 
 def abstract_summary_extraction(transcription):
@@ -218,6 +260,14 @@ def transcribe_audio(files):
     global MODEL
     transcription = None
     minutes = None
+    costs = {
+        'abstract_summary'  : 0,
+        'key_points'        : 0,
+        'action_items'      : 0,
+        'sentiment'         : 0,
+    }
+    audio_cost = 0
+
     # check if transcription file exists
     if os.path.exists(OUTPUT_DIR + files['audio'] + '-transcription.txt'):
         print("Transcription file already exists, skipping transcription...")
@@ -225,7 +275,7 @@ def transcribe_audio(files):
             file=OUTPUT_DIR + files['audio'] + '-transcription.txt', mode='r'
         ).read()
     else:
-        transcription = speech_to_text(audio_file=OUTPUT_DIR + files['audio'])
+        transcription, audio_cost = speech_to_text(audio_file=OUTPUT_DIR + files['audio'])
         files['transcription'] = f'{files["audio"]}-transcription.txt'
         with open(OUTPUT_DIR + f'{files["transcription"]}', 'w') as f:
             f.write(transcription)
@@ -271,7 +321,7 @@ def transcribe_audio(files):
                 f.write(f"## {title}\n\n{text}\n\n\n")
 
     print(f"All done! Find your files in {OUTPUT_DIR}")
-    total_cost = costs['abstract_summary'] + costs['key_points'] + costs['action_items'] + costs['sentiment']
+    total_cost = costs['abstract_summary'] + costs['key_points'] + costs['action_items'] + costs['sentiment'] + audio_cost
     print(f"Total cost: ${total_cost}")
 
 def main(url):
@@ -289,8 +339,18 @@ def main(url):
     files = {}
     files['audio'] = download_audio_from_youtube(
         url=url, video_info=video_info)
-    transcribe_audio(files=files)
-
+    try:
+        lock = threading.Lock()
+        loading_indicator = LoadingIndicator(lock)
+        loading_indicator.start()
+        transcribe_audio(files=files)
+        loading_indicator.stop()
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    except:
+        raise Exception("An error occurred")
+    finally:
+        loading_indicator.stop()
 
 if __name__ == '__main__':
     url = sys.argv[1]

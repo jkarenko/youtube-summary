@@ -23,10 +23,10 @@ YouTube video to text to summary.
    ```
 
 1. Login to dockerhub with the account you created earlier:
+
    ```bash
    docker login
    ```
-
 
 1. Build the Docker image:
 
