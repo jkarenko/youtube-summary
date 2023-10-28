@@ -11,4 +11,4 @@ build/
 .pytest_cache/
 transcribe-audio/*
 !transcribe-audio/.keep
-
+.DS_Store

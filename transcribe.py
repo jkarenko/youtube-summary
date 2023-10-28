@@ -95,10 +95,6 @@ def download_audio_from_youtube(url, video_info):
     return filename or None
 
 
-# def remove_silence(audio_file):
-    
-
-
 def speech_to_text(audio_file):
     print(f"opening audio file {audio_file}...")
 
@@ -260,11 +256,12 @@ def transcribe_audio(files):
     global MODEL
     transcription = None
     minutes = None
+
     costs = {
-        'abstract_summary'  : 0,
-        'key_points'        : 0,
-        'action_items'      : 0,
-        'sentiment'         : 0,
+        'abstract_summary':     0,
+        'key_points':           0,
+        'action_items':         0,
+        'sentiment':            0,
     }
     audio_cost = 0
 
@@ -323,6 +320,7 @@ def transcribe_audio(files):
     print(f"All done! Find your files in {OUTPUT_DIR}")
     total_cost = costs['abstract_summary'] + costs['key_points'] + costs['action_items'] + costs['sentiment'] + audio_cost
     print(f"Total cost: ${total_cost}")
+
 
 def main(url):
     ydl_opts = {
