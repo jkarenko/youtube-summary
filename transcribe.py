@@ -218,6 +218,12 @@ def transcribe_audio(files):
     global MODEL
     transcription = None
     minutes = None
+    costs = {
+        'abstract_summary':     0,
+        'key_points':           0,
+        'action_items':         0,
+        'sentiment':            0,
+    }
     # check if transcription file exists
     if os.path.exists(OUTPUT_DIR + files['audio'] + '-transcription.txt'):
         print("Transcription file already exists, skipping transcription...")
