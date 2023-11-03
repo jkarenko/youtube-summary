@@ -1,3 +1,4 @@
+import re
 import string
 import yt_dlp
 import os
@@ -18,28 +19,9 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 file_extension = 'mp3'
 lemmatizer = WordNetLemmatizer()
 MODEL = "gpt-3.5-turbo"
+MODEL_SRT = "gpt-3.5-turbo"
 MIN_OUTPUT_TOKENS = 100
-SAMPLE_RATE = 8000
-
-
-class LoadingIndicator(threading.Thread):
-    def __init__(self, lock):
-        super(LoadingIndicator, self).__init__()
-        self.stop_flag = threading.Event()
-        self.lock = lock
-
-    def run(self):
-        while not self.stop_flag.is_set():
-            for cursor in '|/-\\':
-                with self.lock:
-                    sys.stdout.write(cursor)
-                    sys.stdout.flush()
-                time.sleep(0.1)
-                with self.lock:
-                    sys.stdout.write('\b')
-
-    def stop(self):
-        self.stop_flag.set()
+SAMPLE_RATE = '8000'
 
 
 MODELS_INFO = {
@@ -51,19 +33,10 @@ MODELS_INFO = {
 }
 
 
-def loading_indicator():
-    while True:
-        for cursor in '|/-\\':
-            sys.stdout.write(cursor)
-            sys.stdout.flush()
-            time.sleep(0.1)
-            sys.stdout.write('\b')
-
-
 def speed_up_audio(filename):
     print("speeding up audio...")
     output_filename = Path(filename).with_suffix('.' + file_extension).name
-    print(f"creating {output_filename}...")
+    print(f"creating {OUTPUT_DIR + output_filename}")
     subprocess.run(['ffmpeg', '-n', '-i', filename, '-filter:a', 'atempo=2.0', '-ar', SAMPLE_RATE, '-vn', '-ac', '1', '-q:a', '9', OUTPUT_DIR + output_filename], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     return output_filename
@@ -99,118 +72,85 @@ def speech_to_text(audio_file):
     print(f"opening audio file {audio_file}...")
 
     audio = open(audio_file, "rb")
-    audio_duration_minutes = len(audio.read()) / SAMPLE_RATE / 60
+    # audio_duration_minutes = len(audio.read()) / SAMPLE_RATE / 60
+    audio_duration_minutes = AudioSegment.from_file(audio_file).duration_seconds / 60
+    # if audio_duration_minutes > 30:
+    #     print(f"Audio duration is {audio_duration_minutes} minutes, splitting into 30 minute chunks...")
+    #     audio_chunks = AudioSegment.from_file(audio_file).split_to_mono()
+    #     audio_duration_minutes = 0
+    #     for chunk in audio_chunks:
+    #         audio_duration_minutes += chunk.duration_seconds / 60
+    #         if audio_duration_minutes >= 30:
+    #             break
+    #     audio = audio_chunks[0]
+    #     audio_file = audio_file.split('.')[0] + '-chunk.mp3'
+    #     audio.export(audio_file, format='mp3')
+    #     print(f"New audio file is {audio_file}")
+    #     print(f"New audio duration is {audio_duration_minutes} minutes")
+
     audio_cost = audio_duration_minutes * MODELS_INFO['whisper']['cost_per_minute']
 
     print(f"audio duration: {audio_duration_minutes} minutes")
     print(f"cost for audio to text: ${audio_cost}")
     print(f"transcribing audio from {audio_file}...")
 
+    # response = openai.Audio.transcribe(model='whisper-1', file=audio, response_format='srt', language='en')
     response = openai.Audio.transcribe(model='whisper-1', file=audio, response_format='srt', language='en')
 
     print("\n")
     return response, audio_cost
 
 
-def meeting_minutes(transcription):
-    abstract_summary = abstract_summary_extraction(transcription)
-    key_points = key_points_extraction(transcription)
-    action_items = action_item_extraction(transcription)
-    sentiment = sentiment_analysis(transcription)
+def meeting_minutes(transcription, transcription_srt):
+    system_texts = {
+        "abstract": {"summary_type": "abstract", "system": "You are a highly skilled AI trained in language comprehension and summarization. I would like you to read the following text and summarize it into a concise abstract paragraph. Aim to retain the most important points, providing a coherent and readable summary that could help a person understand the main points of the discussion without needing to read the entire text. Please avoid unnecessary details or tangential points."},
+        # "key_points": {"summary_type": "key points", "system": "You are a proficient AI with a specialty in distilling information into key points or central claims. Based on the following text, identify and list the main points or claims that were discussed or brought up. These should be the most important ideas, findings, claims or topics that are crucial to the essence of the discussion. Your goal is to provide a list that someone could read to quickly understand what was talked about. Output a numbered list of key points (e.g. 1. point 1)"},
+        "key_points": {"summary_type": "key points", "system": "You are a proficient AI with a specialty in distilling information into central claims. Based on the following text, identify and list the main claims brought up. These should be the most important claims that are crucial to the essence of the argument. Your goal is to provide a list that someone could read to quickly understand what was claimed. Output a numbered list of the claims (e.g. 1. point 1)"},
+        "truthfulness": {"summary_type": "truthfulness", "system": "You are an expert AI debunking system. Your task is to analyze the following text and categorize all claims as either true, false, misleading or subjective with a brief explanation. Your analysis must be based on available objective data and research."},
+        "action_items": {"summary_type": "action items", "system": "You are an AI expert in analyzing conversations and extracting action items. Please review the text and identify any tasks, assignments, or actions that were agreed upon or mentioned as needing to be done. These could be tasks assigned to specific individuals, or general actions that the group has decided to take. Please list these action items clearly and concisely."},
+        "sentiment_analysis": {"summary_type": "sentiment analysis", "system": "As an AI with expertise in language and emotion analysis, your task is to analyze the sentiment of the following text. Please consider the overall tone of the discussion, the emotion conveyed by the language used, and the context in which words and phrases are used. Indicate whether the sentiment is generally positive, negative, or neutral, and provide brief explanations for your analysis where possible."},
+    }
+
+    abstract_summary = summary_extraction(transcription, system_texts['abstract']['summary_type'], system_texts['abstract']['system'])
+    # key_points = summary_extraction(transcription_srt, system_texts['key_points']['summary_type'], system_texts['key_points']['system'], model=MODEL_SRT)
+    key_points = summary_extraction(transcription, system_texts['key_points']['summary_type'], system_texts['key_points']['system'], model='gpt-4')
+    truthfulness = summary_extraction(key_points['content'], system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4')
+    action_items = summary_extraction(transcription, system_texts['action_items']['summary_type'], system_texts['action_items']['system'])
+    sentiment = summary_extraction(transcription, system_texts['sentiment_analysis']['summary_type'], system_texts['sentiment_analysis']['system'])
+
+    kp = [kp for kp in key_points['content'].split('\n') if re.match(r"^\d+\.", kp)]
+    tr = ['. '.join(tr.split('. ')[1:]) for tr in truthfulness['content'].split('\n') if re.match(r"^\d+\.", tr)]
+
+    combined_kp_tr = []
+    for i in range(len(kp)):
+        combined_kp_tr.append(f"{kp[i]}\n\n\t{tr[i]}\n\n")
+
+
     return {
         'abstract_summary'  : abstract_summary['content'],
-        'key_points'        : key_points['content'],
+        # 'key_points'        : "".join(combined_kp_tr),
+        'central_claims'    : "".join(combined_kp_tr),
+        # 'truthfulness'      : truthfulness['content'],
         'action_items'      : action_items['content'],
         'sentiment'         : sentiment['content'],
     }, {
         'abstract_summary'  : (abstract_summary['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + abstract_summary['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
-        'key_points'        : (key_points['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + key_points['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
+        'key_points'        : (key_points['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + key_points['completion_tokens'] * MODELS_INFO[MODEL_SRT]['per_1k_tokens_output']) / 1000,
+        'truthfulness'      : (truthfulness['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + truthfulness['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
         'action_items'      : (action_items['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + action_items['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
         'sentiment'         : (sentiment['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + sentiment['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
     }
 
 
-def abstract_summary_extraction(transcription):
-    print("creating abstract...")
+def summary_extraction(transcription, summary_type, system_message=None, model=MODEL):
+    print(f"creating {summary_type}...")
     response = openai.ChatCompletion.create(
-        model=MODEL,
+        model=model,
         temperature=0,
         messages=[
             {
                 "role": "system",
-                "content": "You are a highly skilled AI trained in language comprehension and summarization. I would like you to read the following text and summarize it into a concise abstract paragraph. Aim to retain the most important points, providing a coherent and readable summary that could help a person understand the main points of the discussion without needing to read the entire text. Please avoid unnecessary details or tangential points."
-            },
-            {
-                "role": "user",
-                "content": transcription
-            }
-        ]
-    )
-
-    return {
-        'content': response['choices'][0]['message']['content'],
-        'prompt_tokens': response['usage']['prompt_tokens'],
-        'completion_tokens': response['usage']['completion_tokens']
-    }
-
-
-def key_points_extraction(transcription):
-    print("extracting key points...")
-    response = openai.ChatCompletion.create(
-        model=MODEL,
-        temperature=0,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a proficient AI with a specialty in distilling information into key points. Based on the following text, identify and list the main points that were discussed or brought up. These should be the most important ideas, findings, or topics that are crucial to the essence of the discussion. Your goal is to provide a list that someone could read to quickly understand what was talked about."
-            },
-            {
-                "role": "user",
-                "content": transcription
-            }
-        ]
-    )
-
-    return {
-        'content': response['choices'][0]['message']['content'],
-        'prompt_tokens': response['usage']['prompt_tokens'],
-        'completion_tokens': response['usage']['completion_tokens']
-    }
-
-
-def sentiment_analysis(transcription):
-    print("performing sentiment analysis...")
-    response = openai.ChatCompletion.create(
-        model=MODEL,
-        temperature=0,
-        messages=[
-            {
-                "role": "system",
-                "content": "As an AI with expertise in language and emotion analysis, your task is to analyze the sentiment of the following text. Please consider the overall tone of the discussion, the emotion conveyed by the language used, and the context in which words and phrases are used. Indicate whether the sentiment is generally positive, negative, or neutral, and provide brief explanations for your analysis where possible."
-            },
-            {
-                "role": "user",
-                "content": transcription
-            }
-        ]
-    )
-
-    return {
-        'content': response['choices'][0]['message']['content'],
-        'prompt_tokens': response['usage']['prompt_tokens'],
-        'completion_tokens': response['usage']['completion_tokens']
-    }
-
-
-def action_item_extraction(transcription):
-    print("extracting action items...")
-    response = openai.ChatCompletion.create(
-        model=MODEL,
-        temperature=0,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are an AI expert in analyzing conversations and extracting action items. Please review the text and identify any tasks, assignments, or actions that were agreed upon or mentioned as needing to be done. These could be tasks assigned to specific individuals, or general actions that the group has decided to take. Please list these action items clearly and concisely."
+                "content": system_message
             },
             {
                 "role": "user",
@@ -241,25 +181,38 @@ def minimize_text(transcription):
     return ' '.join(minimized_transcription)
 
 
-def count_openai_tokens(transcription):
-    enc = tiktoken.encoding_for_model(model_name=MODEL)
+def count_openai_tokens(transcription, model=MODEL):
+    enc = tiktoken.encoding_for_model(model_name=model)
     return len(enc.encode(text=transcription))
 
 
-def truncate_text(transcription):
-    max_tokens = MODELS_INFO[MODEL]['max_tokens'] - MIN_OUTPUT_TOKENS
-    enc = tiktoken.encoding_for_model(model_name=MODEL)
-    return enc.decode(enc.encode(text=transcription)[:max_tokens])
+def srt_to_text(transcription_srt):
+    print("converting srt to text...")
+
+    lines = []
+
+    for line in transcription_srt.splitlines():
+        if re.match(r'\d{2}:\d{2}:\d{2},\d{3}', line):
+            continue
+        if line.strip() == '':
+            continue
+        if re.match(r'^\d+$', line):
+            continue
+        lines.append(line)
+
+    return "\n".join(lines)
 
 
 def transcribe_audio(files):
-    global MODEL
+    global MODEL, MODEL_SRT
+    transcription_srt = None
     transcription = None
     minutes = None
 
     costs = {
         'abstract_summary':     0,
         'key_points':           0,
+        'truthfulness':         0,
         'action_items':         0,
         'sentiment':            0,
     }
@@ -267,24 +220,40 @@ def transcribe_audio(files):
 
     # check if transcription file exists
     if os.path.exists(OUTPUT_DIR + files['audio'] + '-transcription.txt'):
-        print("Transcription file already exists, skipping transcription...")
-        transcription = open(
-            file=OUTPUT_DIR + files['audio'] + '-transcription.txt', mode='r'
-        ).read()
+        print("Transcription file already exists, skipping...")
+        transcription = open(file=OUTPUT_DIR + files['audio'] + '-transcription.txt', mode='r').read()
+    if os.path.exists(OUTPUT_DIR + files['audio'] + '-transcription.srt'):
+        print("Transcription SRT file already exists, skipping...")
+        transcription_srt = open(file=OUTPUT_DIR + files['audio'] + '-transcription.txt', mode='r').read()
     else:
-        transcription, audio_cost = speech_to_text(audio_file=OUTPUT_DIR + files['audio'])
+        transcription_srt, audio_cost = speech_to_text(audio_file=OUTPUT_DIR + files['audio'])
+        files['transcription_srt'] = f'{files["audio"]}-transcription.srt'
+
+        transcription = srt_to_text(transcription_srt)
         files['transcription'] = f'{files["audio"]}-transcription.txt'
+
+        with open(OUTPUT_DIR + f'{files["transcription_srt"]}', 'w') as f:
+            f.write(transcription_srt)
+
         with open(OUTPUT_DIR + f'{files["transcription"]}', 'w') as f:
             f.write(transcription)
 
+
     max_tokens = MODELS_INFO[MODEL]['max_tokens']
     print(f"\nMax tokens for {MODEL}: {max_tokens}")
-    tokens = count_openai_tokens(transcription=transcription)
-    print(f"Raw transcript tokens: {tokens}\n")
+
+    tokens = count_openai_tokens(transcription=transcription, model=MODEL)
+    tokens_srt = count_openai_tokens(transcription=transcription_srt, model=MODEL_SRT)
+
+    print(f"Transcript tokens required: {tokens}\n")
+
     minimized_text = minimize_text(transcription=transcription)
-    minimized_tokens = count_openai_tokens(transcription=minimized_text)
-    print(f"minimized transcript tokens: {minimized_tokens}")
-    print("Using minimized text for minutes...\n")
+    minimized_tokens = count_openai_tokens(transcription=minimized_text, model=MODEL)
+
+    print(f"Minimized transcript tokens: {minimized_tokens}")
+    print(f"Transcript SRT tokens required: {tokens_srt}\n")
+    print("Using SRT transcript for key points and minimized text for everything else...\n")
+
     if minimized_tokens > max_tokens - MIN_OUTPUT_TOKENS:
         # new_model = next((k for k, v in MAX_TOKENS.items() if v > minimized_tokens + 100 and k.startswith('-'.join(MODEL.split('-')[:2]))), None)
         new_model = next((k for k, v in MODELS_INFO.items() if v['max_tokens'] > minimized_tokens + 100), None)
@@ -296,10 +265,23 @@ def transcribe_audio(files):
         print(f"This might increase your costs significantly.")
         print(f"Current cost for input only: ${MODELS_INFO[MODEL]['per_1k_tokens_input'] * 4 * minimized_tokens / 1000}")
         print(f"New cost for input only: ${MODELS_INFO[new_model]['per_1k_tokens_input'] * 4 * minimized_tokens / 1000}")
-        MODEL = new_model
-    # input("Press Enter to continue or Ctrl+C to exit...")
 
-    # check if minutes file exists
+        MODEL = new_model
+
+    if tokens_srt > max_tokens - MIN_OUTPUT_TOKENS:
+        # new_model = next((k for k, v in MAX_TOKENS.items() if v > minimized_tokens + 100 and k.startswith('-'.join(MODEL.split('-')[:2]))), None)
+        new_model_srt = next((k for k, v in MODELS_INFO.items() if v['max_tokens'] > tokens_srt + 100), None)
+        # transcription = truncate_text(transcription=transcription)
+        print(
+            f"Amount of input tokens ({tokens_srt}) would only leave {max_tokens - tokens_srt} tokens for output. Minimum output tokens is {MIN_OUTPUT_TOKENS} and {MODEL} has a max token limit of {max_tokens}.")
+        print(
+            f"Continuing with {new_model_srt}, which has a max token limit of {MODELS_INFO[new_model_srt]['max_tokens']}")
+        print(f"This might increase your costs significantly.")
+        print(f"Current cost for input only: ${MODELS_INFO[MODEL]['per_1k_tokens_input'] * 4 * tokens_srt / 1000}")
+        print(f"New cost for input only: ${MODELS_INFO[new_model_srt]['per_1k_tokens_input'] * 4 * tokens_srt / 1000}")
+
+        MODEL_SRT = new_model_srt
+
     if os.path.exists(path=OUTPUT_DIR + files['audio'] + '-minutes.md'):
         print("Minutes file already exists, skipping minutes...")
         minutes = open(
@@ -307,7 +289,7 @@ def transcribe_audio(files):
             files['audio'] + '-minutes.md', mode='r'
         ).read()
     else:
-        minutes, costs = meeting_minutes(transcription=minimized_text)
+        minutes, costs = meeting_minutes(transcription=minimized_text, transcription_srt=transcription_srt)
         files['minutes'] = f'{files["audio"]}-minutes.md'
         with open(OUTPUT_DIR + f'{files["minutes"]}', 'w') as f:
             f.write(f"# {files['audio']}\n")
@@ -318,7 +300,7 @@ def transcribe_audio(files):
                 f.write(f"## {title}\n\n{text}\n\n\n")
 
     print(f"All done! Find your files in {OUTPUT_DIR}")
-    total_cost = costs['abstract_summary'] + costs['key_points'] + costs['action_items'] + costs['sentiment'] + audio_cost
+    total_cost = costs['abstract_summary'] + costs['key_points'] + costs['truthfulness'] + costs['action_items'] + costs['sentiment'] + audio_cost
     print(f"Total cost: ${total_cost}")
 
 
@@ -338,17 +320,12 @@ def main(url):
     files['audio'] = download_audio_from_youtube(
         url=url, video_info=video_info)
     try:
-        lock = threading.Lock()
-        loading_indicator = LoadingIndicator(lock)
-        loading_indicator.start()
         transcribe_audio(files=files)
-        loading_indicator.stop()
     except KeyboardInterrupt:
         print("\nExiting...")
-    except:
+    except Exception:
         raise Exception("An error occurred")
-    finally:
-        loading_indicator.stop()
+
 
 if __name__ == '__main__':
     url = sys.argv[1]
