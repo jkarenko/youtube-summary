@@ -20,7 +20,7 @@ file_extension = 'mp3'
 lemmatizer = WordNetLemmatizer()
 MODEL = "gpt-3.5-turbo"
 MODEL_SRT = "gpt-3.5-turbo"
-MIN_OUTPUT_TOKENS = 100
+MIN_OUTPUT_TOKENS = 300
 SAMPLE_RATE = '8000'
 
 
@@ -262,7 +262,7 @@ def transcribe_audio(files):
 
     if minimized_tokens > max_tokens - MIN_OUTPUT_TOKENS:
         # new_model = next((k for k, v in MAX_TOKENS.items() if v > minimized_tokens + 100 and k.startswith('-'.join(MODEL.split('-')[:2]))), None)
-        new_model = next((k for k, v in MODELS_INFO.items() if v['max_tokens'] > minimized_tokens + 100), None)
+        new_model = next((k for k, v in MODELS_INFO.items() if v['max_tokens'] > minimized_tokens + MIN_OUTPUT_TOKENS), None)
         # transcription = truncate_text(transcription=transcription)
         print(
             f"Amount of input tokens ({minimized_tokens}) would only leave {max_tokens - minimized_tokens} tokens for output. Minimum output tokens is {MIN_OUTPUT_TOKENS} and {MODEL} has a max token limit of {max_tokens}.")
@@ -276,7 +276,7 @@ def transcribe_audio(files):
 
     if tokens_srt > max_tokens - MIN_OUTPUT_TOKENS:
         # new_model = next((k for k, v in MAX_TOKENS.items() if v > minimized_tokens + 100 and k.startswith('-'.join(MODEL.split('-')[:2]))), None)
-        new_model_srt = next((k for k, v in MODELS_INFO.items() if v['max_tokens'] > tokens_srt + 100), None)
+        new_model_srt = next((k for k, v in MODELS_INFO.items() if v['max_tokens'] > tokens_srt + MIN_OUTPUT_TOKENS), None)
         # transcription = truncate_text(transcription=transcription)
         print(
             f"Amount of input tokens ({tokens_srt}) would only leave {max_tokens - tokens_srt} tokens for output. Minimum output tokens is {MIN_OUTPUT_TOKENS} and {MODEL} has a max token limit of {max_tokens}.")
