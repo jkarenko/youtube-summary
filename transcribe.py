@@ -16,7 +16,7 @@ OUTPUT_DIR = './transcribe-audio/'
 openai.api_key = os.getenv('OPENAI_API_KEY')
 file_extension = 'mp3'
 lemmatizer = WordNetLemmatizer()
-MODEL = "gpt-3.5-turbo"
+MODEL = "gpt-4-turbo-preview"
 MODEL_SRT = "gpt-3.5-turbo"
 MIN_OUTPUT_TOKENS = 300
 SAMPLE_RATE = '8000'
@@ -27,6 +27,7 @@ MODELS_INFO = {
     'gpt-3.5-turbo-16k': {'max_tokens': 16385, 'per_1k_tokens_input': 0.003, 'per_1k_tokens_output': 0.004},
     'gpt-4': {'max_tokens': 8192, 'per_1k_tokens_input': 0.03, 'per_1k_tokens_output': 0.06},
     'gpt-4-32k': {'max_tokens': 32768, 'per_1k_tokens_input': 0.06, 'per_1k_tokens_output': 0.12},
+    'gpt-4-turbo-preview': {'max_tokens': 128000, 'per_1k_tokens_input': 0.01, 'per_1k_tokens_output': 0.03},
     'whisper': {'max_size_mb': 25, 'cost_per_minute': 0.006},
 }
 
@@ -45,7 +46,7 @@ def simulate_gsm_compression(input_filename, output_dir=OUTPUT_DIR):
     audio = audio.set_frame_rate(8000).set_sample_width(1)  # Set frame rate to 8000Hz and sample width to 1 byte
     output_filename = Path(input_filename).stem + ".mp3"
     output_path = os.path.join(output_dir, output_filename)
-    audio.export(output_path, format="mp3", bitrate="32k")
+    audio.export(output_path, format="mp3", bitrate="13k")
     return output_path
 
 
@@ -120,11 +121,11 @@ def meeting_minutes(transcription, transcription_srt):
 
     abstract_summary = summary_extraction(transcription, system_texts['abstract']['summary_type'], system_texts['abstract']['system'])
     # key_points = summary_extraction(transcription_srt, system_texts['key_points']['summary_type'], system_texts['key_points']['system'], model=MODEL_SRT)
-    key_points = summary_extraction(transcription, system_texts['key_points']['summary_type'], system_texts['key_points']['system'], model='gpt-4')
+    key_points = summary_extraction(transcription, system_texts['key_points']['summary_type'], system_texts['key_points']['system'], model='gpt-4-turbo-preview')
     claims = []
     for point in key_points['content'].split('\n'):
         if re.match(r"^\d+\.", point):
-            claims += point + "\n\n\t" + summary_extraction(point, system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4')['content'] + "\n\n"
+            claims += point + "\n\n\t" + summary_extraction(f"text:\n{transcription}\n\nclaim:\n{point}", system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4-turbo-preview')['content'] + "\n\n"
     # truthfulness = summary_extraction(key_points['content'], system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4')
     action_items = summary_extraction(transcription, system_texts['action_items']['summary_type'], system_texts['action_items']['system'])
     sentiment = summary_extraction(transcription, system_texts['sentiment_analysis']['summary_type'], system_texts['sentiment_analysis']['system'])
