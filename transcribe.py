@@ -20,6 +20,7 @@ MODEL = "gpt-4-turbo-preview"
 MODEL_SRT = "gpt-3.5-turbo"
 MIN_OUTPUT_TOKENS = 300
 SAMPLE_RATE = '8000'
+OVERWRITE = True
 
 
 MODELS_INFO = {
@@ -103,7 +104,7 @@ def speech_to_text(audio_file):
     print(f"transcribing audio from {audio_file}...")
 
     # response = openai.Audio.transcribe(model='whisper-1', file=audio, response_format='srt', language='en')
-    response = openai.audio.transcriptions.create(model='whisper-1', file=audio, response_format='srt')
+    response = openai.audio.translations.create(model='whisper-1', file=audio, response_format='srt')
 
     print("\n")
     return response, audio_cost
@@ -113,8 +114,8 @@ def meeting_minutes(transcription, transcription_srt):
     system_texts = {
         "abstract": {"summary_type": "abstract", "system": "You are a highly skilled AI trained in language comprehension and summarization. I would like you to read the following text and summarize it into a concise abstract paragraph. Aim to retain the most important points, providing a coherent and readable summary that could help a person understand the main points of the discussion without needing to read the entire text. Please avoid unnecessary details or tangential points."},
         # "key_points": {"summary_type": "key points", "system": "You are a proficient AI with a specialty in distilling information into key points or central claims. Based on the following text, identify and list the main points or claims that were discussed or brought up. These should be the most important ideas, findings, claims or topics that are crucial to the essence of the discussion. Your goal is to provide a list that someone could read to quickly understand what was talked about. Output a numbered list of key points (e.g. 1. point 1)"},
-        "key_points": {"summary_type": "key points", "system": "You are a proficient AI with a specialty in distilling information into central claims. Based on the following text, identify and list the main claims brought up. These should be the most important claims that are crucial to the essence of the argument. Your goal is to provide a list that someone could read to quickly understand what was claimed. Output a numbered list of the claims (e.g. 1. point 1)"},
-        "truthfulness": {"summary_type": "claim evaluation", "system": "Examine the text and categorize it as TRUE, FALSE, SUBJECTIVE, or UNKNOWN—respond with classification - reason. Assign 'FALSE' with verifiable incorrect information and provide a brief correction. Use 'SUBJECTIVE' for opinions or interpretive statements, with a succinct explanation. If a statement cannot be verified with the training data, classify it as UNKNOWN. Ignore minor typos in names."},
+        "key_points": {"summary_type": "key points", "system": "You are a proficient AI with a specialty in distilling information into central claims. Based on the following text, identify and list the main claims brought up. These should be the most important claims that are crucial to the essence of the argument. Your goal is to provide a list that someone could read to quickly understand what was claimed. Output a numbered list of the claims (e.g. 1. point 1). Max 5 claims."},
+        "truthfulness": {"summary_type": "claim evaluation", "system": "Assess the truthfulness of the claim in light of common knowledge and available evidence. If the claim is true, provide a brief explanation of why it is true. If the claim is false, provide a brief explanation of why it is false. If the claim is uncertain or requires more context, provide a brief explanation of why it is uncertain or requires more context. Please provide a response for each claim listed in the previous step. If there are no claims, please indicate that there are no claims to evaluate. Keep it as short as possible."},
         "action_items": {"summary_type": "action items", "system": "You are an AI expert in analyzing conversations and extracting action items. Please review the text and identify any tasks, assignments, or actions that were agreed upon or mentioned as needing to be done. These could be tasks assigned to specific individuals, or general actions that the group has decided to take. Please list these action items clearly and concisely."},
         "sentiment_analysis": {"summary_type": "sentiment analysis", "system": "As an AI with expertise in language and emotion analysis, your task is to analyze the sentiment of the following text. Please consider the overall tone of the discussion, the emotion conveyed by the language used, and the context in which words and phrases are used. Indicate whether the sentiment is generally positive, negative, or neutral, and provide brief explanations for your analysis where possible."},
     }
@@ -125,9 +126,9 @@ def meeting_minutes(transcription, transcription_srt):
     claims = []
     for point in key_points['content'].split('\n'):
         if re.match(r"^\d+\.", point):
-            claims += point + "\n\n\t" + summary_extraction(f"text:\n{transcription}\n\nclaim:\n{point}", system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4-turbo-preview')['content'] + "\n\n"
+            claims += point + "\n\n\t" + summary_extraction(f"context:\n{abstract_summary['content']}\n\nclaim:\n{point}", system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4-turbo-preview')['content'] + "\n\n"
     # truthfulness = summary_extraction(key_points['content'], system_texts['truthfulness']['summary_type'], system_texts['truthfulness']['system'], model='gpt-4')
-    action_items = summary_extraction(transcription, system_texts['action_items']['summary_type'], system_texts['action_items']['system'])
+    # action_items = summary_extraction(transcription, system_texts['action_items']['summary_type'], system_texts['action_items']['system'])
     sentiment = summary_extraction(transcription, system_texts['sentiment_analysis']['summary_type'], system_texts['sentiment_analysis']['system'])
 
     # kp = [kp for kp in key_points['content'].split('\n') if re.match(r"^\d+\.", kp)]
@@ -144,14 +145,15 @@ def meeting_minutes(transcription, transcription_srt):
         # 'central_claims'    : "".join(combined_kp_tr),
         'central_claims'    : "".join(claims),
         # 'truthfulness'      : truthfulness['content'],
-        'action_items'      : action_items['content'],
+        # 'action_items'      : action_items['content'],
         'sentiment'         : sentiment['content'],
     }, {
         'abstract_summary'  : (abstract_summary['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + abstract_summary['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
         'key_points'        : (key_points['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + key_points['completion_tokens'] * MODELS_INFO[MODEL_SRT]['per_1k_tokens_output']) / 1000,
         # 'truthfulness'      : (truthfulness['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + truthfulness['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
         'truthfulness'      : 0,
-        'action_items'      : (action_items['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + action_items['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
+        # 'action_items'      : (action_items['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + action_items['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
+        'action_items'      : 0,
         'sentiment'         : (sentiment['prompt_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_input'] + sentiment['completion_tokens'] * MODELS_INFO[MODEL]['per_1k_tokens_output']) / 1000,
     }
 
@@ -296,7 +298,7 @@ def transcribe_audio(files):
 
         MODEL_SRT = new_model_srt
 
-    if os.path.exists(path=OUTPUT_DIR + files['audio'] + '-minutes.md'):
+    if os.path.exists(path=OUTPUT_DIR + files['audio'] + '-minutes.md') and not OVERWRITE:
         print("Minutes file already exists, skipping minutes...")
         minutes = open(
             file=OUTPUT_DIR +
