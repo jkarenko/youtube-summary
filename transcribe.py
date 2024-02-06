@@ -34,12 +34,21 @@ MODELS_INFO = {
 
 
 def speed_up_audio(filename):
-    print("speeding up audio...")
+    print("Speeding up audio...")
     output_filename = Path(filename).with_suffix('.' + file_extension).name
-    print(f"creating {OUTPUT_DIR + output_filename}")
+    print(f"Creating {OUTPUT_DIR + output_filename}")
     subprocess.run(['ffmpeg', '-n', '-i', filename, '-filter:a', 'atempo=2.0', '-ar', SAMPLE_RATE, '-vn', '-ac', '1', '-q:a', '9', OUTPUT_DIR + output_filename], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    output_path = simulate_gsm_compression(OUTPUT_DIR + output_filename)
+    return Path(output_path).name
 
-    return output_filename
+def simulate_gsm_compression(input_filename, output_dir=OUTPUT_DIR):
+    print("Simulating GSM compression...")
+    audio = AudioSegment.from_file(input_filename)
+    audio = audio.set_frame_rate(8000).set_sample_width(1)  # Set frame rate to 8000Hz and sample width to 1 byte
+    output_filename = Path(input_filename).stem + ".mp3"
+    output_path = os.path.join(output_dir, output_filename)
+    audio.export(output_path, format="mp3", bitrate="32k")
+    return output_path
 
 
 def download_audio_from_youtube(url, video_info):
@@ -95,7 +104,7 @@ def speech_to_text(audio_file):
     print(f"transcribing audio from {audio_file}...")
 
     # response = openai.Audio.transcribe(model='whisper-1', file=audio, response_format='srt', language='en')
-    response = openai.Audio.transcribe(model='whisper-1', file=audio, response_format='srt', language='en')
+    response = openai.audio.transcriptions.create(model='whisper-1', file=audio, response_format='srt')
 
     print("\n")
     return response, audio_cost
@@ -150,7 +159,7 @@ def meeting_minutes(transcription, transcription_srt):
 
 def summary_extraction(transcription, summary_type, system_message=None, model=MODEL):
     print(f"creating {summary_type}...")
-    response = openai.ChatCompletion.create(
+    response = openai.chat.completions.create(
         model=model,
         temperature=0,
         messages=[
@@ -166,9 +175,9 @@ def summary_extraction(transcription, summary_type, system_message=None, model=M
     )
 
     return {
-        'content': response['choices'][0]['message']['content'],
-        'prompt_tokens': response['usage']['prompt_tokens'],
-        'completion_tokens': response['usage']['completion_tokens']
+        'content': response.choices[0].message.content,
+        'prompt_tokens': response.usage.prompt_tokens,
+        'completion_tokens': response.usage.completion_tokens
     }
 
 
