@@ -39,7 +39,7 @@ docker build --build-arg OPENAI_API_KEY=<your_key> -t youtube-summary .
 1. Run the Docker container:
 
 ```bash
-docker run -it --rm -v ./transcribe-audio:/app/transcribe-audio youtube-summary <YouTube video URL>
+docker run -it --rm -v ./transcribe-audio:/app/transcribe-audio youtube-summary "<YouTube video URL>"
 ```
 
 1. The application will automatically start within the Docker container. Wait for the process to complete. Audio, transcript and minutes will appear in the `transcribe-audio` directory in the project root.
