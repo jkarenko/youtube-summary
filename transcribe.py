@@ -6,8 +6,6 @@ import openai
 import sys
 import subprocess
 import tiktoken
-import time
-import threading
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.stem import WordNetLemmatizer
